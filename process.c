@@ -11,7 +11,7 @@
 
 struct fatso_process {
   char* path;
-  char** argv;
+  FATSO_ARRAY(char*) args;
   void* userdata;
   const struct fatso_process_callbacks* callbacks;
   pid_t pid;
@@ -30,14 +30,14 @@ fatso_process_new(
   struct fatso_process* p = fatso_alloc(sizeof(struct fatso_process));
   p->path = strdup(path);
 
-  size_t idx;
-  p->argv = fatso_alloc(sizeof(char*));
-  p->argv[0] = strdup(path);
   for (char* const* a = argv; *a; ++a) {
-    idx = a - argv;
-    p->argv = fatso_reallocf(p->argv, (idx+3) * sizeof(char*));
-    p->argv[idx+1] = strdup(*a);
+    char* str = strdup(*a);
+    fatso_push_back_v(&p->args, &str);
   }
+  char* null = NULL;
+  fatso_push_back_v(&p->args, &null);
+
+  printf("process_new path is %s\n", path);
 
   p->userdata = userdata;
   p->callbacks = callbacks;
@@ -54,10 +54,10 @@ fatso_process_free(struct fatso_process* p) {
   if (p->in != 0)
     close(p->in);
   fatso_free(p->path);
-  for (char** a = p->argv; *a; ++a) {
-    fatso_free(*a);
+  for (size_t i = 0; i < p->args.size; ++i) {
+    fatso_free(p->args.data[i]);
   }
-  fatso_free(p->argv);
+  fatso_free(p->args.data);
   fatso_free(p);
 }
 
@@ -92,7 +92,7 @@ fatso_process_start(struct fatso_process* p) {
     dup2(in[0], fileno(stdin));
     dup2(out[1], fileno(stdout));
     dup2(err[1], fileno(stderr));
-    r = execvp(p->path, p->argv);
+    r = execvp(p->path, p->args.data);
     perror("execvp");
     exit(1);
   } else if (p->pid < 0) {
@@ -256,10 +256,13 @@ fatso_system(const char* command) {
   while (*p0) {
     const char* p1 = strchr(p0, ' ');
     size_t len;
+    size_t end;
     if (p1) {
       len = p1 - p0;
+      end = len + 1;
     } else {
       len = strlen(p0);
+      end = len;
     }
     const char* s0 = p0;
     size_t slen = len;
@@ -273,15 +276,17 @@ fatso_system(const char* command) {
     }
 
     char* component = strndup(s0, slen);
+    printf("adding component: %s\n", component);
     fatso_push_back_v(&args, &component);
-    p0 = p0 + len + 1;
+    p0 = p0 + end;
   }
   char* null = NULL;
   fatso_push_back_v(&args, &null);
 
   path = strdup(args.data[0]);
+  printf("path is %s\n", path);
 
-  struct fatso_process* process = fatso_process_new(path, args.data + 1, &standard_callbacks, NULL);
+  struct fatso_process* process = fatso_process_new(path, args.data, &standard_callbacks, NULL);
   fatso_process_start(process);
   int r = fatso_process_wait(process);
   fatso_process_free(process);
